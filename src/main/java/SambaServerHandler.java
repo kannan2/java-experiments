@@ -2,39 +2,47 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
-import jcifs.smb.NtlmPasswordAuthentication;
-import jcifs.smb.SmbAuthException;
+import jcifs.CIFSContext;
+import jcifs.CIFSException;
+import jcifs.context.SingletonContext;
+import jcifs.smb.NtlmPasswordAuthenticator;
 import jcifs.smb.SmbException;
 import jcifs.smb.SmbFile;
 
 /**
  * Class to handle connections to Samba/SMB servers and retrieve files and directories recursively.
+ * Uses jcifs-ng library with SMB2/SMB3 support.
  */
 public class SambaServerHandler {
-    
+
     private String serverAddress;
     private String username;
     private String password;
     private String domain;
-    private NtlmPasswordAuthentication authentication;
-    
+    private CIFSContext context;
+
     /**
      * Constructor to initialize Samba server connection parameters.
      *
      * @param serverAddress  The SMB server address (e.g., "smb://192.168.1.100/share/")
      * @param domain         The domain/workgroup (can be null or empty)
-     * @param username       The username for authentication (can be null for guest access)
-     * @param password       The password for authentication (can be null for guest access)
+     * @param username       The username for context (can be null for guest access)
+     * @param password       The password for context (can be null for guest access)
      */
     public SambaServerHandler(String serverAddress, String domain, String username, String password) {
         this.serverAddress = serverAddress;
         this.username = username;
         this.password = password;
         this.domain = domain != null ? domain : "";
-        
-        // Initialize authentication (null means guest access)
+
+        // Initialize CIFS context with context
         if (username != null && password != null) {
-            this.authentication = new NtlmPasswordAuthentication(this.domain, username, password);
+            NtlmPasswordAuthenticator auth = new NtlmPasswordAuthenticator(
+                this.domain, username, password);
+            this.context = SingletonContext.getInstance().withCredentials(auth);
+        } else {
+            // Guest access
+            this.context = SingletonContext.getInstance();
         }
     }
     
@@ -45,18 +53,36 @@ public class SambaServerHandler {
      */
     public boolean connect() {
         try {
-            SmbFile smbFile = new SmbFile(serverAddress, authentication);
+            // Validate server address format
+            if (!serverAddress.startsWith("smb://")) {
+                System.err.println("Invalid server address format. Must start with 'smb://'");
+                System.err.println("Example: smb://192.168.68.107/sambashare/");
+                return false;
+            }
+
+            if (!serverAddress.endsWith("/")) {
+                System.err.println("Warning: Server address should end with '/'");
+                serverAddress = serverAddress + "/";
+            }
+
+            System.out.println("Attempting to connect to: " + serverAddress);
+            System.out.println("Using context - Domain: " + domain + ", Username: " + username);
+
+            SmbFile smbFile = new SmbFile(serverAddress, context);
             smbFile.listFiles();
             System.out.println("Successfully connected to Samba server: " + serverAddress);
             return true;
-        } catch (SmbAuthException e) {
-            System.err.println("Authentication failed: " + e.getMessage());
-            return false;
-        } catch (SmbException e) {
-            System.err.println("Failed to connect to Samba server: " + e.getMessage());
-            return false;
         } catch (Exception e) {
-            System.err.println("Unexpected error during connection: " + e.getMessage());
+            System.err.println("Failed to connect to Samba server: " + e.getMessage());
+            if (e.getMessage() != null && (e.getMessage().contains("Logon failure") || e.getMessage().contains("Access is denied"))) {
+                System.err.println("Authentication failed. Please check your username, password, and domain.");
+            }
+            System.err.println("Possible causes:");
+            System.err.println("  - Server address is incorrect");
+            System.err.println("  - Share name is wrong");
+            System.err.println("  - Server is not reachable on the network");
+            System.err.println("  - SMB ports (445, 139) are blocked");
+            e.printStackTrace();
             return false;
         }
     }
@@ -69,7 +95,7 @@ public class SambaServerHandler {
      */
     public List<SambaFile> getFilesRecursively() throws Exception {
         List<SambaFile> results = new ArrayList<>();
-        SmbFile rootFile = new SmbFile(serverAddress, authentication);
+        SmbFile rootFile = new SmbFile(serverAddress, context);
         traverseDirectory(rootFile, "", results);
         return results;
     }
@@ -94,7 +120,7 @@ public class SambaServerHandler {
             fullPath += "/";
         }
         
-        SmbFile rootFile = new SmbFile(fullPath, authentication);
+        SmbFile rootFile = new SmbFile(fullPath, context);
         traverseDirectory(rootFile, path, results);
         return results;
     }
@@ -267,14 +293,32 @@ public class SambaServerHandler {
     
     /**
      * Example usage of the SambaServerHandler class.
+     *
+     * Usage: java -jar samba-handler.jar <serverAddress> <domain> <username> <password>
+     * Example: java -jar samba-handler.jar smb://192.168.1.100/share/ WORKGROUP user pass
      */
     public static void main(String[] args) {
-        // Configure these with your actual Samba server details
-        String serverAddress = "smb://mubuntu.local/sambashare/";  // Change to your server
-        String domain = "WORKGROUP";                             // Change if needed
-        String username = "ubuntu";                                // Change to your username
-        String password = "passfromcl";                            // Change to your password
-        
+        // Validate command-line arguments
+        if (args.length < 4) {
+            System.err.println("Usage: java -jar samba-handler.jar <serverAddress> <domain> <username> <password>");
+            System.err.println("Example: java -jar samba-handler.jar smb://192.168.1.100/share/ WORKGROUP user pass");
+            System.err.println("\nArguments:");
+            System.err.println("  serverAddress - SMB server address (e.g., smb://192.168.1.100/share/)");
+            System.err.println("  domain        - Domain/workgroup name (use WORKGROUP if unsure)");
+            System.err.println("  username      - Username for context");
+            System.err.println("  password      - Password for context");
+            System.exit(1);
+        }
+
+        String serverAddress = args[0];
+        String domain = args[1];
+        String username = args[2];
+        String password = args[3];
+
+        System.out.println("Connecting to: " + serverAddress);
+        System.out.println("Domain: " + domain);
+        System.out.println("Username: " + username);
+
         SambaServerHandler handler = new SambaServerHandler(serverAddress, domain, username, password);
         
         // Test connection
