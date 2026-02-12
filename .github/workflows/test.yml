@@ -22,27 +22,21 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    - name: Run tests with Maven
+    - name: Run tests with coverage
       run: mvn clean test
 
-    - name: Generate coverage report
-      run: mvn jacoco:report
-
-    - name: Upload coverage to GitHub
+    - name: Upload coverage report
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: coverage-report
         path: target/site/jacoco/
 
-    - name: Check code coverage
-      run: mvn jacoco:check
-      continue-on-error: true
-
-    - name: Display test results
+    - name: Display test summary
       if: always()
       run: |
-        echo "Test Results:"
+        echo "=== Test Summary ==="
+        echo "Coverage threshold: 30% minimum"
         if [ -f target/surefire-reports/*.txt ]; then
           cat target/surefire-reports/*.txt
         fi
